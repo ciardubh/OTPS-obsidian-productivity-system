@@ -171,10 +171,10 @@ Your review system will help you track:
 Ensure you understand the task formatting system:
 
 - Basic task: `- [ ] Task description`
-- Task with time estimate: `- [ ] Task description #time 1h
+- Task with time estimate: `- [ ] Task description #time 1h`
 		- Time estimates take h or m: `2.5h` or `30m`
-		- The task scheduling script assumes 1hr per task if you don't add a time estimate
-		- The time tag has a tendency to break the due date if you place it after. So estimate time before adding a due date, if there is a due date
+  			- The task scheduling script assumes 1hr per task if you don't add a time estimate
+			- The time tag has a tendency to break the due date if you place it after. So estimate time before adding a due date, if there is a due date
 - Task with due date: `- [ ] Task description 📅 YYYY-MM-DD`
 - Task with criticality: `- [ ] Task description #critical`
 - Complete format: `- [ ] Task description #time 1h 📅 YYYY-MM-DD #critical`
