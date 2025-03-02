@@ -2,6 +2,7 @@
 #### The templates assume you have an autoimmune disorder and ADHD. Feel free to edit the templates to remove some of the excess parameters if your life is going better than that.
 
 This guide will help you set up the comprehensive productivity management system in Obsidian that includes task scheduling, project management, and routine creation.
+
 ## Tips for Getting Started
 
 1. Set up a few sample projects and areas to get familiar with the system
@@ -9,10 +10,12 @@ This guide will help you set up the comprehensive productivity management system
 3. Use the emergency protocols when needed
 4. Schedule regular weekly/monthly reviews
 5. Start with critical projects first, then gradually add more content
+   
 ## Prerequisites
 
 1. [Download and install Obsidian](https://obsidian.md/)
 2. Basic familiarity with Markdown syntax (or you can be happy just blindly copying and pasting from me)
+   
 ## Step 1: Install Required Plugins
 
 After installing Obsidian, you'll need to install these core plugins:
@@ -34,7 +37,7 @@ After installing Obsidian, you'll need to install these core plugins:
 ## Step 2: Set Up Folder Structure
 
 1. Create a new vault or open your existing one
-2. Create the following folders (they are already set up if you downloaded my set-up from GitHub)
+2. Create the following folders
 3. `00-Dashboard` - For primary views and controls
 4. `01-Projects` - For all project notes
 5. `02-Areas` - For ongoing areas of responsibility
@@ -42,16 +45,18 @@ After installing Obsidian, you'll need to install these core plugins:
 7. `04-Archive` - For completed projects
 8. `05-Templates` - For your templates
 9. `06-Daily` - For daily notes
-## Step 3: Import Templates
+    
+## Step 3: Import Templates and Dashboards
 
 1. Download the provided templates or create them based on examples
-2. Place them in the `05-Templates` folder
+2. Organise them in the `05-Templates`  and `01-Dashboards` folders
 3. Core templates you'll need:
     - Project template
     - Area template
     - Daily note template
     - Weekly/monthly review templates
     - Emergency protocols (sick day, get back on track)
+      
 ## Step 4: Set Up Scripts
 
 1. Place the `task-scheduler.js` script in your `05-Templates` folder
@@ -73,6 +78,7 @@ After installing Obsidian, you'll need to install these core plugins:
     - Point it to the `advance-project-stage.js` file
     - Save the macro
     - Add the macro to your QuickAdd choices
+      
 ## Step 5: Configure Daily Notes
 
 1. Go to Settings → Daily Notes
