@@ -5,7 +5,6 @@ module.exports = async function(params) {
   
   // Configuration
   const CONFIG = {
-    hoursPerDay: 6, 
     defaultTaskTime: 1,
     autoDateTag: "#autodate",
     sequenceTag: "#seq", // Tag to mark sequential tasks
@@ -15,6 +14,24 @@ module.exports = async function(params) {
       "2": 2,
       "3": 1
     },
+    // Daily hours configuration - hours available on each day of week
+    // Sunday is 0, Monday is 1, ..., Saturday is 6
+    dailyHours: {
+      0: 6,  // Sunday: 0 hours
+      1: 1,  // Monday: 6 hour 
+      2: 1,  // Tuesday: 6 hour 
+      3: 6,  // Wednesday: 6 hours
+      4: 6,  // Thursday: 6 hours
+      5: 6,  // Friday: 6 hours
+      6: 6,  // Saturday: 0 hours
+  },
+  
+  // Minimum hours required to schedule a task on a day
+  // If available hours are below this, consider the day unavailable
+  minimumUsableHours: 1,
+  
+  // Whether to allow scheduling on days with limited hours
+  allowLimitedHourDays: true
    bufferPercent: 0.8,
    maxPlanningDays: 90, // Maximum days to plan ahead
    maxProjectionDays: 30, // Maximum days to show in the report
@@ -53,7 +70,39 @@ module.exports = async function(params) {
         return moment().add(days, 'days').format('YYYY-MM-DD');
       }
     }
-    
+	// Replace hoursPerDay usage with dynamic function
+	function getAvailableHours(dateString) {
+	  try {
+	    if (!isValidDate(dateString)) return CONFIG.hoursPerDay;
+	    
+	    const date = moment(dateString, "YYYY-MM-DD");
+	    const dayOfWeek = date.day(); // 0 = Sunday, 1 = Monday, etc.
+	    
+	    // If the day has a specific configuration, use it
+	    if (dayOfWeek in CONFIG.dailyHours) {
+	      return CONFIG.dailyHours[dayOfWeek];
+	    }
+	    
+	    // Otherwise, fall back to default
+	    return CONFIG.hoursPerDay;
+	  } catch (e) {
+	    console.log(`Error getting available hours: ${e.message}`);
+	    return CONFIG.hoursPerDay; // Default as fallback
+	  }
+	}
+
+	// Modify the isDateAvailable helper function 
+	function isDateAvailable(dateString) {
+	  const hours = getAvailableHours(dateString);
+	  
+	  // If we don't allow limited hour days, check against minimum
+	  if (!CONFIG.allowLimitedHourDays && hours < CONFIG.minimumUsableHours) {
+	    return false;
+	  }
+	  
+	  // Otherwise, any day with > 0 hours is available
+	  return hours > 0;
+	}    
     const today = moment().format('YYYY-MM-DD');
     console.log(`Today's date: ${today}`);
     
@@ -284,8 +333,24 @@ module.exports = async function(params) {
           }
         }
         
-        // Determine how many days we need for tasks before fixed date
-        const daysNeededBefore = Math.max(1, Math.min(30, Math.ceil(timeBeforeFixed / (CONFIG.hoursPerDay * CONFIG.bufferPercent))));
+        // Calculate effective days needed considering daily hour variations
+	let remainingHours = totalSequenceTime;
+	let effectiveDays = 0;
+	let checkDate = today;
+	
+	while (remainingHours > 0 && effectiveDays < 90) { // Safety limit
+	  const dailyHours = getAvailableHours(checkDate);
+	  
+	  if (dailyHours > 0) {
+	    const usableHours = dailyHours * CONFIG.bufferPercent;
+	    remainingHours -= usableHours;
+	  }
+	  
+	  effectiveDays++;
+	  checkDate = safeAddDays(today, effectiveDays);
+	}
+	
+	const daysNeeded = Math.max(1, effectiveDays);
         
         // Calculate starting date for the sequence
         let sequenceStartDate = today;
@@ -362,31 +427,36 @@ module.exports = async function(params) {
           
           // Check if currentDate has enough capacity
           iterationCounter = 0; // Reset counter for each task
-          while (workloadMap[currentDate] && 
-                workloadMap[currentDate].totalHours + task.time > CONFIG.hoursPerDay * CONFIG.bufferPercent) {
-            // Safety check to prevent infinite loops
-            iterationCounter++;
-            if (iterationCounter > CONFIG.maxIterations) {
-              console.log(`Warning: Maximum iterations reached when scheduling task. Using emergency date assignment.`);
-              // Emergency fallback - just assign it to a date 1 week out per task position
-              currentDate = safeAddDays(today, 7 + i * 2);
-              break;
-            }
-            
-            // Move to next day if current day is full
-            try {
-              currentDate = safeAddDays(currentDate, 1);
-            } catch (e) {
-              console.log(`Error adding days for capacity check: ${e.message}`);
-              currentDate = safeAddDays(today, i + 1);
-              break;
-            }
-            
-            // Initialize this date in workload map if needed
-            if (!workloadMap[currentDate]) {
-              workloadMap[currentDate] = { totalHours: 0, tasks: [] };
-            }
-          }
+          while (workloadMap[currentDate]) {
+	  const dailyHours = getAvailableHours(currentDate);
+	  
+	  // Skip days with insufficient hours if configured that way
+	  if (!isDateAvailable(currentDate)) {
+	    currentDate = safeAddDays(currentDate, 1);
+	    continue;
+	  }
+	  
+	  // Check if day has enough remaining capacity
+	  if (workloadMap[currentDate].totalHours + task.time <= dailyHours * CONFIG.bufferPercent) {
+	    break; // This day works
+	  }
+	  
+	  // Otherwise move to next day
+	  currentDate = safeAddDays(currentDate, 1);
+	  
+	  // Reset counter and add safety checks
+	  iterationCounter++;
+	  if (iterationCounter > CONFIG.maxIterations) {
+	    console.log(`Warning: Maximum iterations reached when scheduling task. Using emergency date assignment.`);
+	    currentDate = safeAddDays(today, 7 + i * 2);
+	    break;
+	  }
+	  
+	  // Initialize this date in workload map if needed
+	  if (!workloadMap[currentDate]) {
+	    workloadMap[currentDate] = { totalHours: 0, tasks: [] };
+	  }
+	}
           
           // Schedule task for current date
           task.scheduledDate = currentDate;
@@ -475,7 +545,6 @@ module.exports = async function(params) {
         let bestScore = -Infinity;
         
         // Define scheduling horizon - limit to avoid performance issues
-// Define scheduling horizon - limit to avoid performance issues
 	let schedulingHorizon = 30; // Default scheduling horizon
 	
 	if (task.projectDeadline && isValidDate(task.projectDeadline)) {
@@ -518,14 +587,19 @@ module.exports = async function(params) {
         for (let i = 0; i < Math.min(schedulingHorizon, 30); i++) {
           try {
             const date = safeAddDays(today, i);
-            const dayLoad = workloadMap[date] ? workloadMap[date].totalHours : 0;
-            
-            // Skip overloaded days
-            if (dayLoad >= CONFIG.hoursPerDay * CONFIG.bufferPercent) continue;
+		const dailyHours = getAvailableHours(date);
+		
+		// Skip days with insufficient hours
+		if (!isDateAvailable(date)) continue;
+		
+		const dayLoad = workloadMap[date] ? workloadMap[date].totalHours : 0;
+		
+		// Skip overloaded days
+		if (dayLoad >= dailyHours * CONFIG.bufferPercent) continue;
             
             // Calculate score
             const closenessScore = (schedulingHorizon - i) / schedulingHorizon * 10;
-            const capacityScore = (CONFIG.hoursPerDay * CONFIG.bufferPercent - dayLoad) / CONFIG.hoursPerDay * 10;
+            const capacityScore = (dailyHours * CONFIG.bufferPercent - dayLoad) / dailyHours * 10;
             const criticalityWeight = CONFIG.criticalityWeights[task.criticality] || 1;
             
             const score = closenessScore + capacityScore * criticalityWeight;
@@ -787,7 +861,9 @@ module.exports = async function(params) {
       try {
         const date = safeAddDays(today, i);
         const dayLoad = workloadMap[date] ? workloadMap[date].totalHours : 0;
-        const dayPercent = (dayLoad / CONFIG.hoursPerDay) * 100;
+        const dailyHours = getAvailableHours(date);
+	// Handle case where daily hours might be zero
+	const dayPercent = dailyHours > 0 ? (dayLoad / dailyHours) * 100 : 0;
         
         const monthName = moment(date).format('MMMM');
         if (monthName !== currentMonth) {
@@ -803,7 +879,7 @@ module.exports = async function(params) {
         }
         
         const dayFormat = moment(date).format('DD ddd');
-        reportContent += `${dayFormat}: ${loadBar} ${dayLoad.toFixed(1)}h / ${CONFIG.hoursPerDay}h (${dayPercent.toFixed(0)}%)\n`;
+        reportContent += `${dayFormat}: ${loadBar} ${dayLoad.toFixed(1)}h / ${dailyHours}h (${dayPercent.toFixed(0)}%)\n`;
       } catch (e) {
         console.log(`Error rendering calendar day: ${e.message}`);
       }
