@@ -1,4 +1,4 @@
-// bulletproof-task-scheduler.js
+// task-scheduler.js
 module.exports = async function(params) {
   const { app, quickAddApi } = params;
   const moment = window.moment;
@@ -15,12 +15,15 @@ module.exports = async function(params) {
       "2": 2,
       "3": 1
     },
-    bufferPercent: 0.8,
-    maxPlanningDays: 90, // Maximum days to plan ahead (reduced from 120)
-    maxProjectionDays: 30,  // Maximum days to show in the report (reduced from 60)
-    maxTasksPerGroup: 20,   // Safety limit for sequence groups
-    maxIterations: 500     // Safety limit to prevent infinite loops (reduced from 1000)
-  };
+   bufferPercent: 0.8,
+   maxPlanningDays: 90, // Maximum days to plan ahead
+   maxProjectionDays: 30, // Maximum days to show in the report
+   maxTasksPerGroup: 20, // Safety limit for sequence groups
+   maxIterations: 500, // Safety limit to prevent infinite loops
+      // New configuration values for delayed project start - 03/03/25
+   maxEarlyStartWeeks: 3, // Maximum number of weeks to start a project early
+   minBufferDays: 5 // Minimum buffer days even for small projects
+};
   
   console.log("Starting task scheduler...");
   
@@ -302,21 +305,40 @@ module.exports = async function(params) {
             sequenceStartDate = today;
           }
         } else if (projectDeadline && isValidDate(projectDeadline)) {
-          // If no fixed date but project has deadline, work backwards from deadline
-          try {
-            const daysNeeded = Math.max(1, Math.min(30, Math.ceil(totalSequenceTime / (CONFIG.hoursPerDay * CONFIG.bufferPercent))));
-            const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
-            sequenceStartDate = deadlineDate.clone().subtract(daysNeeded, 'days').format('YYYY-MM-DD');
-            
-            // But don't start before today
-            if (moment(sequenceStartDate).isBefore(moment(today))) {
-              sequenceStartDate = today;
-            }
-          } catch (e) {
-            console.log(`Error calculating sequence start date from project deadline: ${e.message}`);
-            sequenceStartDate = today;
-          }
-        }
+	  // If no fixed date but project has deadline, work backwards with smart scheduling
+	  try {
+	    // Calculate days needed for all tasks with buffer
+	    const daysNeeded = Math.max(1, Math.ceil(totalSequenceTime / (CONFIG.hoursPerDay * CONFIG.bufferPercent)));
+	    
+	    // Add minimum buffer days for all projects
+	    const totalDaysWithBuffer = daysNeeded + CONFIG.minBufferDays;
+	    
+	    // Calculate latest possible start date
+	    const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
+	    const latestPossibleStartDate = deadlineDate.clone().subtract(totalDaysWithBuffer, 'days');
+	    
+	    // Calculate earliest reasonable start date (3 weeks before latest start)
+	    const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
+	    const earliestReasonableStartDate = latestPossibleStartDate.clone().subtract(maxEarlyStartDays, 'days');
+	    
+	    // If deadline is far away, delay the start rather than starting immediately
+	    if (moment(earliestReasonableStartDate).isAfter(moment(today))) {
+	      console.log(`Project with deadline ${projectDeadline} will start at the earliest reasonable date rather than today`);
+	      sequenceStartDate = earliestReasonableStartDate.format('YYYY-MM-DD');
+	    } else if (moment(latestPossibleStartDate).isAfter(moment(today))) {
+	      // If we're between earliest and latest start, use latest possible start
+	      console.log(`Project with deadline ${projectDeadline} will start at latest possible date: ${latestPossibleStartDate.format('YYYY-MM-DD')}`);
+	      sequenceStartDate = latestPossibleStartDate.format('YYYY-MM-DD');
+	    } else {
+	      // If we're after the latest start date, start today (we're behind)
+	      console.log(`Project with deadline ${projectDeadline} needs to start immediately (past latest start date)`);
+	      sequenceStartDate = today;
+	    }
+	  } catch (e) {
+	    console.log(`Error calculating sequence start date from project deadline: ${e.message}`);
+	    sequenceStartDate = today;
+	  }
+	}
         
         console.log(`Sequence group ${groupId} will start on ${sequenceStartDate}`);
         
@@ -453,16 +475,37 @@ module.exports = async function(params) {
         let bestScore = -Infinity;
         
         // Define scheduling horizon - limit to avoid performance issues
-        let schedulingHorizon = 30; // Reduced from 60 for performance
-        
-        if (task.projectDeadline && isValidDate(task.projectDeadline)) {
-          try {
-            const daysUntilDeadline = moment(task.projectDeadline).diff(moment(today), 'days');
-            schedulingHorizon = Math.min(Math.max(daysUntilDeadline, 1), 30);
-          } catch (e) {
-            console.log(`Error calculating days until deadline: ${e.message}`);
-          }
-        }
+// Define scheduling horizon - limit to avoid performance issues
+	let schedulingHorizon = 30; // Default scheduling horizon
+	
+	if (task.projectDeadline && isValidDate(task.projectDeadline)) {
+	  try {
+	    const daysUntilDeadline = moment(task.projectDeadline).diff(moment(today), 'days');
+	    
+	    // Calculate days needed for this task with buffer
+	    const daysNeeded = Math.ceil(task.time / (CONFIG.hoursPerDay * CONFIG.bufferPercent)) + CONFIG.minBufferDays;
+	    
+	    // Calculate latest start date
+	    const latestStartDays = Math.max(1, daysUntilDeadline - daysNeeded);
+	    
+	    // If deadline is far away, limit scheduling horizon to delay start
+	    const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
+	    if (latestStartDays > maxEarlyStartDays) {
+	      // Use earliest reasonable start date
+	      schedulingHorizon = Math.max(1, latestStartDays - maxEarlyStartDays);
+	      console.log(`Task for project with deadline ${task.projectDeadline} has horizon set to ${schedulingHorizon} days`);
+	    } else {
+	      // Use the latest possible start date
+	      schedulingHorizon = latestStartDays;
+	    }
+	    
+	    // Safety check
+	    schedulingHorizon = Math.min(Math.max(schedulingHorizon, 1), 30);
+	  } catch (e) {
+	    console.log(`Error calculating scheduling horizon: ${e.message}`);
+	    schedulingHorizon = 30;
+	  }
+	}
         
         // Safety limit for iterations
         schedulingCounter++;
