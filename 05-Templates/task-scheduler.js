@@ -3,28 +3,44 @@ module.exports = async function(params) {
   const { app, quickAddApi } = params;
   const moment = window.moment;
   
-  // Configuration
   const CONFIG = {
-    defaultTaskTime: 1,
-    autoDateTag: "#autodate",
-    sequenceTag: "#seq", // Tag to mark sequential tasks
-    sequencePrefixRegex: /^\[(\d+)\]/, // Format: [1] First task, [2] Second task
-    criticalityWeights: {
-      "1": 3,
-      "2": 2,
-      "3": 1
-    },
-    // Daily hours configuration - hours available on each day of week
-    // Sunday is 0, Monday is 1, ..., Saturday is 6
-    dailyHours: {
-      0: 6,  // Sunday: 0 hours
-      1: 1,  // Monday: 6 hour 
-      2: 1,  // Tuesday: 6 hour 
-      3: 6,  // Wednesday: 6 hours
-      4: 6,  // Thursday: 6 hours
-      5: 6,  // Friday: 6 hours
-      6: 6,  // Saturday: 0 hours
+  hoursPerDay: 6, // Default hours per day (kept for backward compatibility)
+  defaultTaskTime: 1,
+  autoDateTag: "#autodate",
+  sequenceTag: "#seq", // Tag to mark sequential tasks
+  sequencePrefixRegex: /^\[(\d+)\]/, // Format: [1] First task, [2] Second task
+  criticalityWeights: {
+    "1": 3,
+    "2": 2,
+    "3": 1
   },
+  // Daily hours configuration - hours available on each day of week
+  // Sunday is 0, Monday is 1, ..., Saturday is 6
+  dailyHours: {
+    0: 0,  // Sunday: 0 hours
+    1: 6,  // Monday: 6 hours
+    2: 6,  // Tuesday: 6 hours
+    3: 6,  // Wednesday: 6 hours
+    4: 6,  // Thursday: 6 hours
+    5: 6,  // Friday: 6 hours
+    6: 0,  // Saturday: 0 hours
+  },
+  
+  // Minimum hours required to schedule a task on a day
+  minimumUsableHours: 1,
+  
+  // Whether to allow scheduling on days with limited hours
+  allowLimitedHourDays: true,
+  
+  bufferPercent: 0.8,
+  maxPlanningDays: 90, // Maximum days to plan ahead
+  maxProjectionDays: 30, // Maximum days to show in the report
+  maxTasksPerGroup: 20, // Safety limit for sequence groups
+  maxIterations: 500, // Safety limit to prevent infinite loops
+  // New configuration values for delayed project start - 03/03/25
+  maxEarlyStartWeeks: 3, // Maximum number of weeks to start a project early
+  minBufferDays: 5 // Minimum buffer days even for small projects
+};
   
   // Minimum hours required to schedule a task on a day
   // If available hours are below this, consider the day unavailable
@@ -356,54 +372,72 @@ module.exports = async function(params) {
         let sequenceStartDate = today;
         
         if (earliestFixedDate && isValidDate(earliestFixedDate)) {
-          // Start by working backwards from the fixed date
-          try {
-            const fixedDate = moment(earliestFixedDate, "YYYY-MM-DD");
-            sequenceStartDate = fixedDate.clone().subtract(daysNeededBefore, 'days').format('YYYY-MM-DD');
-            
-            // But don't start before today
-            if (moment(sequenceStartDate).isBefore(moment(today))) {
-              sequenceStartDate = today;
-            }
-          } catch (e) {
-            console.log(`Error calculating sequence start date from fixed date: ${e.message}`);
-            sequenceStartDate = today;
-          }
-        } else if (projectDeadline && isValidDate(projectDeadline)) {
-	  // If no fixed date but project has deadline, work backwards with smart scheduling
+	  // Start by working backwards from the fixed date
 	  try {
-	    // Calculate days needed for all tasks with buffer
-	    const daysNeeded = Math.max(1, Math.ceil(totalSequenceTime / (CONFIG.hoursPerDay * CONFIG.bufferPercent)));
+	    // Calculate how many days we need for tasks before the fixed date
+	    // using our new calculation that respects day-of-week scheduling
+	    let remainingHours = timeBeforeFixed;
+	    let daysNeeded = 0;
+	    let checkDate = earliestFixedDate;
 	    
-	    // Add minimum buffer days for all projects
-	    const totalDaysWithBuffer = daysNeeded + CONFIG.minBufferDays;
+	    while (remainingHours > 0 && daysNeeded < 90) { // Safety limit
+	      checkDate = moment(earliestFixedDate).subtract(daysNeeded, 'days').format('YYYY-MM-DD');
+	      const dailyHours = getAvailableHours(checkDate);
+	      
+	      if (dailyHours > 0) {
+	        const usableHours = dailyHours * CONFIG.bufferPercent;
+	        remainingHours -= usableHours;
+	      }
+	      
+	      daysNeeded++;
+	    }
 	    
-	    // Calculate latest possible start date
-	    const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
-	    const latestPossibleStartDate = deadlineDate.clone().subtract(totalDaysWithBuffer, 'days');
+	    const fixedDate = moment(earliestFixedDate, "YYYY-MM-DD");
+	    sequenceStartDate = fixedDate.clone().subtract(daysNeeded, 'days').format('YYYY-MM-DD');
 	    
-	    // Calculate earliest reasonable start date (3 weeks before latest start)
-	    const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
-	    const earliestReasonableStartDate = latestPossibleStartDate.clone().subtract(maxEarlyStartDays, 'days');
-	    
-	    // If deadline is far away, delay the start rather than starting immediately
-	    if (moment(earliestReasonableStartDate).isAfter(moment(today))) {
-	      console.log(`Project with deadline ${projectDeadline} will start at the earliest reasonable date rather than today`);
-	      sequenceStartDate = earliestReasonableStartDate.format('YYYY-MM-DD');
-	    } else if (moment(latestPossibleStartDate).isAfter(moment(today))) {
-	      // If we're between earliest and latest start, use latest possible start
-	      console.log(`Project with deadline ${projectDeadline} will start at latest possible date: ${latestPossibleStartDate.format('YYYY-MM-DD')}`);
-	      sequenceStartDate = latestPossibleStartDate.format('YYYY-MM-DD');
-	    } else {
-	      // If we're after the latest start date, start today (we're behind)
-	      console.log(`Project with deadline ${projectDeadline} needs to start immediately (past latest start date)`);
+	    // But don't start before today
+	    if (moment(sequenceStartDate).isBefore(moment(today))) {
 	      sequenceStartDate = today;
 	    }
 	  } catch (e) {
-	    console.log(`Error calculating sequence start date from project deadline: ${e.message}`);
+	    console.log(`Error calculating sequence start date from fixed date: ${e.message}`);
 	    sequenceStartDate = today;
 	  }
-	}
+	} 
+	else if (projectDeadline && isValidDate(projectDeadline)) {
+	  // If no fixed date but project has deadline, work backwards with smart scheduling
+	  try {
+    // We already calculated daysNeeded with the day-of-week approach earlier
+    
+    // Add minimum buffer days for all projects
+    const totalDaysWithBuffer = daysNeeded + CONFIG.minBufferDays;
+    
+    // Calculate latest possible start date
+    const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
+    const latestPossibleStartDate = deadlineDate.clone().subtract(totalDaysWithBuffer, 'days');
+    
+    // Calculate earliest reasonable start date (3 weeks before latest start)
+    const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
+    const earliestReasonableStartDate = latestPossibleStartDate.clone().subtract(maxEarlyStartDays, 'days');
+    
+    // If deadline is far away, delay the start rather than starting immediately
+    if (moment(earliestReasonableStartDate).isAfter(moment(today))) {
+      console.log(`Project with deadline ${projectDeadline} will start at the earliest reasonable date rather than today`);
+      sequenceStartDate = earliestReasonableStartDate.format('YYYY-MM-DD');
+    } else if (moment(latestPossibleStartDate).isAfter(moment(today))) {
+      // If we're between earliest and latest start, use latest possible start
+      console.log(`Project with deadline ${projectDeadline} will start at latest possible date: ${latestPossibleStartDate.format('YYYY-MM-DD')}`);
+      sequenceStartDate = latestPossibleStartDate.format('YYYY-MM-DD');
+    } else {
+      // If we're after the latest start date, start today (we're behind)
+      console.log(`Project with deadline ${projectDeadline} needs to start immediately (past latest start date)`);
+      sequenceStartDate = today;
+    }
+  } catch (e) {
+    console.log(`Error calculating sequence start date from project deadline: ${e.message}`);
+    sequenceStartDate = today;
+  }
+}
         
         console.log(`Sequence group ${groupId} will start on ${sequenceStartDate}`);
         
@@ -551,8 +585,24 @@ module.exports = async function(params) {
 	  try {
 	    const daysUntilDeadline = moment(task.projectDeadline).diff(moment(today), 'days');
 	    
-	    // Calculate days needed for this task with buffer
-	    const daysNeeded = Math.ceil(task.time / (CONFIG.hoursPerDay * CONFIG.bufferPercent)) + CONFIG.minBufferDays;
+	    // Calculate days needed for this task with buffer, respecting day-of-week
+	    let remainingHours = task.time;
+	    let effectiveDays = 0;
+	    let checkDate = today;
+	    
+	    while (remainingHours > 0 && effectiveDays < 90) { // Safety limit
+	      const dailyHours = getAvailableHours(checkDate);
+	      
+	      if (dailyHours > 0) {
+	        const usableHours = dailyHours * CONFIG.bufferPercent;
+	        remainingHours -= usableHours;
+	      }
+	      
+	      effectiveDays++;
+	      checkDate = safeAddDays(today, effectiveDays);
+	    }
+	    
+	    const daysNeeded = Math.max(1, effectiveDays) + CONFIG.minBufferDays;
 	    
 	    // Calculate latest start date
 	    const latestStartDays = Math.max(1, daysUntilDeadline - daysNeeded);
@@ -571,6 +621,10 @@ module.exports = async function(params) {
 	    // Safety check
 	    schedulingHorizon = Math.min(Math.max(schedulingHorizon, 1), 30);
 	  } catch (e) {
+	    console.log(`Error calculating scheduling horizon: ${e.message}`);
+	    schedulingHorizon = 30;
+	  }
+	} catch (e) {
 	    console.log(`Error calculating scheduling horizon: ${e.message}`);
 	    schedulingHorizon = 30;
 	  }
@@ -888,7 +942,15 @@ module.exports = async function(params) {
     
     // Add configuration
     reportContent += `\n## Configuration Used\n`;
-    reportContent += `- Hours per day: ${CONFIG.hoursPerDay}\n`;
+    reportContent += `- Default hours per day: ${CONFIG.hoursPerDay}\n`;
+    reportContent += `- Day-specific hours:\n`;
+	reportContent += `  - Sunday: ${CONFIG.dailyHours[0]}h\n`;
+	reportContent += `  - Monday: ${CONFIG.dailyHours[1]}h\n`;
+	reportContent += `  - Tuesday: ${CONFIG.dailyHours[2]}h\n`;
+	reportContent += `  - Wednesday: ${CONFIG.dailyHours[3]}h\n`;
+	reportContent += `  - Thursday: ${CONFIG.dailyHours[4]}h\n`;
+	reportContent += `  - Friday: ${CONFIG.dailyHours[5]}h\n`;
+	reportContent += `  - Saturday: ${CONFIG.dailyHours[6]}h\n`;
     reportContent += `- Default task time: ${CONFIG.defaultTaskTime}h\n`;
     reportContent += `- Buffer: ${CONFIG.bufferPercent * 100}%\n`;
     reportContent += `- Maximum planning days: ${CONFIG.maxPlanningDays}\n`;
