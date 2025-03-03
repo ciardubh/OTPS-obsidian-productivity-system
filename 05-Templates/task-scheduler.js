@@ -25,13 +25,10 @@ module.exports = async function(params) {
     5: 6,  // Friday: 6 hours
     6: 0,  // Saturday: 0 hours
   },
-  
   // Minimum hours required to schedule a task on a day
   minimumUsableHours: 1,
-  
   // Whether to allow scheduling on days with limited hours
   allowLimitedHourDays: true,
-  
   bufferPercent: 0.8,
   maxPlanningDays: 90, // Maximum days to plan ahead
   maxProjectionDays: 30, // Maximum days to show in the report
@@ -89,7 +86,7 @@ module.exports = async function(params) {
 	// Replace hoursPerDay usage with dynamic function
 	function getAvailableHours(dateString) {
 	  try {
-	    if (!isValidDate(dateString)) return CONFIG.hoursPerDay;
+	    if (!isValidDate(dateString)) return getAvailableHours();
 	    
 	    const date = moment(dateString, "YYYY-MM-DD");
 	    const dayOfWeek = date.day(); // 0 = Sunday, 1 = Monday, etc.
@@ -100,10 +97,10 @@ module.exports = async function(params) {
 	    }
 	    
 	    // Otherwise, fall back to default
-	    return CONFIG.hoursPerDay;
+	    return getAvailableHours();
 	  } catch (e) {
 	    console.log(`Error getting available hours: ${e.message}`);
-	    return CONFIG.hoursPerDay; // Default as fallback
+	    return getAvailableHours(); // Default as fallback
 	  }
 	}
 
@@ -624,11 +621,6 @@ module.exports = async function(params) {
 	    console.log(`Error calculating scheduling horizon: ${e.message}`);
 	    schedulingHorizon = 30;
 	  }
-	} catch (e) {
-	    console.log(`Error calculating scheduling horizon: ${e.message}`);
-	    schedulingHorizon = 30;
-	  }
-	}
         
         // Safety limit for iterations
         schedulingCounter++;
@@ -942,7 +934,7 @@ module.exports = async function(params) {
     
     // Add configuration
     reportContent += `\n## Configuration Used\n`;
-    reportContent += `- Default hours per day: ${CONFIG.hoursPerDay}\n`;
+    reportContent += `- Default hours per day: ${getAvailableHours()}\n`;
     reportContent += `- Day-specific hours:\n`;
 	reportContent += `  - Sunday: ${CONFIG.dailyHours[0]}h\n`;
 	reportContent += `  - Monday: ${CONFIG.dailyHours[1]}h\n`;
