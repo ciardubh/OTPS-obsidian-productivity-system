@@ -192,3 +192,76 @@ Criticality levels are important for emergency protocols:
 2. Select "Task Scheduler" from your choices
 3. Let it run (it may take a few moments)
 4. Review the generated report in the `00-Dashboard` folder
+
+# Additional Tools
+
+## Workload Calendar Tool
+
+The workload calendar tool allows you to quickly visualize your task workload for the upcoming month without modifying any tasks. This is perfect for a quick overview of your schedule and identifying overbooked days.
+
+### Setting Up the Workload Calendar
+
+1. **Add the script file**
+   
+   - Download or copy the `workload-calendar.js` script
+   - Place it in your `05-Templates` folder in your vault
+
+2. **Create a QuickAdd Macro**
+   
+   - Go to Settings → Community Plugins → QuickAdd
+   - Click on "Manage Macros"
+   - Click "Add Macro" and name it "Generate Workload Calendar"
+   - Click on the newly created macro to configure it
+   - Click "Add Action" and select "User Script"
+   - In the Script Path field, enter `05-Templates/workload-calendar.js`
+   - Click "Add User Script"
+   - Save the configuration
+
+3. **Add the Macro to QuickAdd Choices**
+   
+   - Still in the QuickAdd settings, scroll to the top 
+   - Under "Choices," click "Add Choice"
+   - Name it "Workload Calendar"
+   - Set the type to "Macro"
+   - Select "Generate Workload Calendar" from the macro dropdown
+   - Click "Add Choice"
+   - You can drag to reorder the choices if needed
+   - Save the configuration
+
+### Using the Workload Calendar
+
+1. Trigger QuickAdd (default hotkey is `Ctrl+P` or `Cmd+P` on Mac)
+2. Select "Workload Calendar" from the menu
+3. The script will run and generate a visual calendar showing your workload for the next 30 days
+4. The calendar will appear in a new note in your `00-Dashboard` folder
+5. The visualization shows:
+   - A bar representing your workload for each day
+   - Your total hours scheduled vs. available hours
+   - The percentage of capacity used
+   - The number of tasks scheduled for each day
+
+The calendar respects your day-specific scheduling configuration, showing accurate workload percentages based on your available hours per day of the week.
+
+### Customizing the Calendar
+
+You can adjust the following settings at the top of the script file:
+
+```javascript
+const CONFIG = {
+  dailyHours: {
+    0: 0,  // Sunday: 0 hours
+    1: 6,  // Monday: 6 hours
+    2: 6,  // Tuesday: 6 hours
+    3: 6,  // Wednesday: 6 hours
+    4: 6,  // Thursday: 6 hours
+    5: 6,  // Friday: 6 hours
+    6: 0,  // Saturday: 0 hours
+  },
+  defaultTaskTime: 1,      // Default time (in hours) for tasks without a time estimate
+  projectionDays: 30,      // Number of days to show in the calendar
+  barLength: 20,           // Length of the visual bar in the calendar
+  includeTaskList: false   // Set to true if you want detailed task lists
+};
+```
+
+To see detailed task lists for each day, set `includeTaskList` to `true`.
