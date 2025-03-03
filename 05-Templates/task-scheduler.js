@@ -1,11 +1,11 @@
-// bulletproof-task-scheduler.js
+// task-scheduler.js
+//Part 1: Core and setup
 module.exports = async function(params) {
   const { app, quickAddApi } = params;
   const moment = window.moment;
   
-  // Configuration
   const CONFIG = {
-    hoursPerDay: 6, 
+    hoursPerDay: 6, // Default hours per day (kept for backward compatibility)
     defaultTaskTime: 1,
     autoDateTag: "#autodate",
     sequenceTag: "#seq", // Tag to mark sequential tasks
@@ -15,11 +15,29 @@ module.exports = async function(params) {
       "2": 2,
       "3": 1
     },
+    // Daily hours configuration - hours available on each day of week
+    // Sunday is 0, Monday is 1, ..., Saturday is 6
+    dailyHours: {
+      0: 0,  // Sunday: 0 hours
+      1: 6,  // Monday: 6 hours
+      2: 6,  // Tuesday: 6 hours
+      3: 6,  // Wednesday: 6 hours
+      4: 6,  // Thursday: 6 hours
+      5: 6,  // Friday: 6 hours
+      6: 0,  // Saturday: 0 hours
+    },
+    // Minimum hours required to schedule a task on a day
+    minimumUsableHours: 1,
+    // Whether to allow scheduling on days with limited hours
+    allowLimitedHourDays: true,
     bufferPercent: 0.8,
-    maxPlanningDays: 90, // Maximum days to plan ahead (reduced from 120)
-    maxProjectionDays: 30,  // Maximum days to show in the report (reduced from 60)
-    maxTasksPerGroup: 20,   // Safety limit for sequence groups
-    maxIterations: 500     // Safety limit to prevent infinite loops (reduced from 1000)
+    maxPlanningDays: 90, // Maximum days to plan ahead
+    maxProjectionDays: 30, // Maximum days to show in the report
+    maxTasksPerGroup: 20, // Safety limit for sequence groups
+    maxIterations: 500, // Safety limit to prevent infinite loops
+    // Configuration values for delayed project start
+    maxEarlyStartWeeks: 3, // Maximum number of weeks to start a project early
+    minBufferDays: 5 // Minimum buffer days even for small projects
   };
   
   console.log("Starting task scheduler...");
@@ -51,6 +69,40 @@ module.exports = async function(params) {
       }
     }
     
+    // Replace hoursPerDay usage with dynamic function
+    function getAvailableHours(dateString) {
+      try {
+        if (!isValidDate(dateString)) return CONFIG.hoursPerDay;
+        
+        const date = moment(dateString, "YYYY-MM-DD");
+        const dayOfWeek = date.day(); // 0 = Sunday, 1 = Monday, etc.
+        
+        // If the day has a specific configuration, use it
+        if (dayOfWeek in CONFIG.dailyHours) {
+          return CONFIG.dailyHours[dayOfWeek];
+        }
+        
+        // Otherwise, fall back to default
+        return CONFIG.hoursPerDay;
+      } catch (e) {
+        console.log(`Error getting available hours: ${e.message}`);
+        return CONFIG.hoursPerDay; // Default as fallback
+      }
+    }
+
+    // Modify the isDateAvailable helper function 
+    function isDateAvailable(dateString) {
+      const hours = getAvailableHours(dateString);
+      
+      // If we don't allow limited hour days, check against minimum
+      if (!CONFIG.allowLimitedHourDays && hours < CONFIG.minimumUsableHours) {
+        return false;
+      }
+      
+      // Otherwise, any day with > 0 hours is available
+      return hours > 0;
+    }
+    
     const today = moment().format('YYYY-MM-DD');
     console.log(`Today's date: ${today}`);
     
@@ -61,24 +113,25 @@ module.exports = async function(params) {
     const markdownFiles = app.vault.getMarkdownFiles();
     console.log(`Found ${markdownFiles.length} markdown files to search for tasks`);
     
-	// Process each file with timeout protection
-	for (const file of markdownFiles) {
-	  try {
-		// Skip files in the Templates folder
-		if (file.path.startsWith("05-Templates/")) {
-		  console.log(`Skipping template file: ${file.path}`);
-		  continue;
-		}
-		
-		// Skip files over 1MB to avoid performance issues
-		const stat = await app.vault.adapter.stat(file.path);
-		if (stat && stat.size > 1000000) {
-		  console.log(`Skipping large file ${file.path} (${Math.round(stat.size/1024)}KB)`);
-		  continue;
-		}
+    // Track failed updates for reporting
+    const failedUpdates = [];
     
-    // Rest of file processing code...
+    // Process each file with timeout protection
+    for (const file of markdownFiles) {
+      try {
+        // Skip files in the Templates folder
+        if (file.path.startsWith("05-Templates/")) {
+          console.log(`Skipping template file: ${file.path}`);
+          continue;
+        }
         
+        // Skip files over 1MB to avoid performance issues
+        const stat = await app.vault.adapter.stat(file.path);
+        if (stat && stat.size > 1000000) {
+          console.log(`Skipping large file ${file.path} (${Math.round(stat.size/1024)}KB)`);
+          continue;
+        }
+    
         const content = await app.vault.read(file);
         
         // Use regex to find tasks
@@ -119,8 +172,9 @@ module.exports = async function(params) {
     }
     
     console.log(`Found ${allTasks.length} total tasks in your vault`);
-    
-    // Create workload map
+	
+	//Part Two: Task processing
+	// Create workload map
     const workloadMap = {};
     
     // Initialize next planning days in workload map
@@ -213,15 +267,17 @@ module.exports = async function(params) {
           ...taskObj,
           due: task.due
         });
-      } // FIX: only reschedule tasks with the "autodate" tag if they also have a "reschedule" tag
-		else if ((!task.due && !task.tags.includes("autodate")) || 
+      } 
+      // Only reschedule tasks with the "autodate" tag if they also have a "reschedule" tag
+      else if ((!task.due && !task.tags.includes("autodate")) || 
          (task.due && task.tags.includes("autodate") && task.tags.includes("reschedule"))) {
-	  tasksToSchedule.push(taskObj);
-	}
+        tasksToSchedule.push(taskObj);
+      }
     }
     
     console.log(`Found ${tasksWithDeadlines.length} tasks with deadlines and ${tasksToSchedule.length} tasks to schedule`);
-	// Process sequential task groups
+    
+    // Process sequential task groups
     const sequentialTasksToSchedule = [];
     
     // For each group of sequential tasks
@@ -281,8 +337,24 @@ module.exports = async function(params) {
           }
         }
         
-        // Determine how many days we need for tasks before fixed date
-        const daysNeededBefore = Math.max(1, Math.min(30, Math.ceil(timeBeforeFixed / (CONFIG.hoursPerDay * CONFIG.bufferPercent))));
+        // Calculate effective days needed considering daily hour variations
+        let remainingHours = totalSequenceTime;
+        let effectiveDays = 0;
+        let checkDate = today;
+        
+        while (remainingHours > 0 && effectiveDays < 90) { // Safety limit
+          const dailyHours = getAvailableHours(checkDate);
+          
+          if (dailyHours > 0) {
+            const usableHours = dailyHours * CONFIG.bufferPercent;
+            remainingHours -= usableHours;
+          }
+          
+          effectiveDays++;
+          checkDate = safeAddDays(today, effectiveDays);
+        }
+        
+        const daysNeeded = Math.max(1, effectiveDays);
         
         // Calculate starting date for the sequence
         let sequenceStartDate = today;
@@ -290,8 +362,26 @@ module.exports = async function(params) {
         if (earliestFixedDate && isValidDate(earliestFixedDate)) {
           // Start by working backwards from the fixed date
           try {
+            // Calculate how many days we need for tasks before the fixed date
+            // using our new calculation that respects day-of-week scheduling
+            let remainingHours = timeBeforeFixed;
+            let daysNeeded = 0;
+            let checkDate = earliestFixedDate;
+            
+            while (remainingHours > 0 && daysNeeded < 90) { // Safety limit
+              checkDate = moment(earliestFixedDate).subtract(daysNeeded, 'days').format('YYYY-MM-DD');
+              const dailyHours = getAvailableHours(checkDate);
+              
+              if (dailyHours > 0) {
+                const usableHours = dailyHours * CONFIG.bufferPercent;
+                remainingHours -= usableHours;
+              }
+              
+              daysNeeded++;
+            }
+            
             const fixedDate = moment(earliestFixedDate, "YYYY-MM-DD");
-            sequenceStartDate = fixedDate.clone().subtract(daysNeededBefore, 'days').format('YYYY-MM-DD');
+            sequenceStartDate = fixedDate.clone().subtract(daysNeeded, 'days').format('YYYY-MM-DD');
             
             // But don't start before today
             if (moment(sequenceStartDate).isBefore(moment(today))) {
@@ -301,15 +391,34 @@ module.exports = async function(params) {
             console.log(`Error calculating sequence start date from fixed date: ${e.message}`);
             sequenceStartDate = today;
           }
-        } else if (projectDeadline && isValidDate(projectDeadline)) {
-          // If no fixed date but project has deadline, work backwards from deadline
+        } 
+        else if (projectDeadline && isValidDate(projectDeadline)) {
+          // If no fixed date but project has deadline, work backwards with smart scheduling
           try {
-            const daysNeeded = Math.max(1, Math.min(30, Math.ceil(totalSequenceTime / (CONFIG.hoursPerDay * CONFIG.bufferPercent))));
-            const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
-            sequenceStartDate = deadlineDate.clone().subtract(daysNeeded, 'days').format('YYYY-MM-DD');
+            // We already calculated daysNeeded with the day-of-week approach earlier
             
-            // But don't start before today
-            if (moment(sequenceStartDate).isBefore(moment(today))) {
+            // Add minimum buffer days for all projects
+            const totalDaysWithBuffer = daysNeeded + CONFIG.minBufferDays;
+            
+            // Calculate latest possible start date
+            const deadlineDate = moment(projectDeadline, "YYYY-MM-DD");
+            const latestPossibleStartDate = deadlineDate.clone().subtract(totalDaysWithBuffer, 'days');
+            
+            // Calculate earliest reasonable start date (3 weeks before latest start)
+            const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
+            const earliestReasonableStartDate = latestPossibleStartDate.clone().subtract(maxEarlyStartDays, 'days');
+            
+            // If deadline is far away, delay the start rather than starting immediately
+            if (moment(earliestReasonableStartDate).isAfter(moment(today))) {
+              console.log(`Project with deadline ${projectDeadline} will start at the earliest reasonable date rather than today`);
+              sequenceStartDate = earliestReasonableStartDate.format('YYYY-MM-DD');
+            } else if (moment(latestPossibleStartDate).isAfter(moment(today))) {
+              // If we're between earliest and latest start, use latest possible start
+              console.log(`Project with deadline ${projectDeadline} will start at latest possible date: ${latestPossibleStartDate.format('YYYY-MM-DD')}`);
+              sequenceStartDate = latestPossibleStartDate.format('YYYY-MM-DD');
+            } else {
+              // If we're after the latest start date, start today (we're behind)
+              console.log(`Project with deadline ${projectDeadline} needs to start immediately (past latest start date)`);
               sequenceStartDate = today;
             }
           } catch (e) {
@@ -319,8 +428,9 @@ module.exports = async function(params) {
         }
         
         console.log(`Sequence group ${groupId} will start on ${sequenceStartDate}`);
-        
-        // Now schedule each task in the sequence
+		
+		//Part Three: Sequence scheduling
+		// Now schedule each task in the sequence
         let currentDate = sequenceStartDate;
         let iterationCounter = 0;
         
@@ -340,23 +450,30 @@ module.exports = async function(params) {
           
           // Check if currentDate has enough capacity
           iterationCounter = 0; // Reset counter for each task
-          while (workloadMap[currentDate] && 
-                workloadMap[currentDate].totalHours + task.time > CONFIG.hoursPerDay * CONFIG.bufferPercent) {
-            // Safety check to prevent infinite loops
+          
+          // Find a date with sufficient capacity
+          while (workloadMap[currentDate]) {
+            const dailyHours = getAvailableHours(currentDate);
+            
+            // Skip days with insufficient hours
+            if (!isDateAvailable(currentDate)) {
+              currentDate = safeAddDays(currentDate, 1);
+              continue;
+            }
+            
+            // Check if day has enough remaining capacity
+            if (workloadMap[currentDate].totalHours + task.time <= dailyHours * CONFIG.bufferPercent) {
+              break; // This day works
+            }
+            
+            // Otherwise move to next day
+            currentDate = safeAddDays(currentDate, 1);
+            
+            // Reset counter and add safety checks
             iterationCounter++;
             if (iterationCounter > CONFIG.maxIterations) {
               console.log(`Warning: Maximum iterations reached when scheduling task. Using emergency date assignment.`);
-              // Emergency fallback - just assign it to a date 1 week out per task position
               currentDate = safeAddDays(today, 7 + i * 2);
-              break;
-            }
-            
-            // Move to next day if current day is full
-            try {
-              currentDate = safeAddDays(currentDate, 1);
-            } catch (e) {
-              console.log(`Error adding days for capacity check: ${e.message}`);
-              currentDate = safeAddDays(today, i + 1);
               break;
             }
             
@@ -453,14 +570,50 @@ module.exports = async function(params) {
         let bestScore = -Infinity;
         
         // Define scheduling horizon - limit to avoid performance issues
-        let schedulingHorizon = 30; // Reduced from 60 for performance
+        let schedulingHorizon = 30; // Default scheduling horizon
         
         if (task.projectDeadline && isValidDate(task.projectDeadline)) {
           try {
             const daysUntilDeadline = moment(task.projectDeadline).diff(moment(today), 'days');
-            schedulingHorizon = Math.min(Math.max(daysUntilDeadline, 1), 30);
+            
+            // Calculate days needed for this task with buffer, respecting day-of-week
+            let remainingHours = task.time;
+            let effectiveDays = 0;
+            let checkDate = today;
+            
+            while (remainingHours > 0 && effectiveDays < 90) { // Safety limit
+              const dailyHours = getAvailableHours(checkDate);
+              
+              if (dailyHours > 0) {
+                const usableHours = dailyHours * CONFIG.bufferPercent;
+                remainingHours -= usableHours;
+              }
+              
+              effectiveDays++;
+              checkDate = safeAddDays(today, effectiveDays);
+            }
+            
+            const daysNeeded = Math.max(1, effectiveDays) + CONFIG.minBufferDays;
+            
+            // Calculate latest start date
+            const latestStartDays = Math.max(1, daysUntilDeadline - daysNeeded);
+            
+            // If deadline is far away, limit scheduling horizon to delay start
+            const maxEarlyStartDays = CONFIG.maxEarlyStartWeeks * 7;
+            if (latestStartDays > maxEarlyStartDays) {
+              // Use earliest reasonable start date
+              schedulingHorizon = Math.max(1, latestStartDays - maxEarlyStartDays);
+              console.log(`Task for project with deadline ${task.projectDeadline} has horizon set to ${schedulingHorizon} days`);
+            } else {
+              // Use the latest possible start date
+              schedulingHorizon = latestStartDays;
+            }
+            
+            // Safety check
+            schedulingHorizon = Math.min(Math.max(schedulingHorizon, 1), 30);
           } catch (e) {
-            console.log(`Error calculating days until deadline: ${e.message}`);
+            console.log(`Error calculating scheduling horizon: ${e.message}`);
+            schedulingHorizon = 30;
           }
         }
         
@@ -470,19 +623,25 @@ module.exports = async function(params) {
           console.log("Warning: Scheduler reached maximum iterations, stopping scheduling process");
           break;
         }
-        
-        // Look through each potential day (limit to reasonable range)
+		
+		// Part Four: Task scheduling
+		// Look through each potential day (limit to reasonable range)
         for (let i = 0; i < Math.min(schedulingHorizon, 30); i++) {
           try {
             const date = safeAddDays(today, i);
+            const dailyHours = getAvailableHours(date);
+            
+            // Skip days with insufficient hours
+            if (!isDateAvailable(date)) continue;
+            
             const dayLoad = workloadMap[date] ? workloadMap[date].totalHours : 0;
             
             // Skip overloaded days
-            if (dayLoad >= CONFIG.hoursPerDay * CONFIG.bufferPercent) continue;
+            if (dayLoad >= dailyHours * CONFIG.bufferPercent) continue;
             
             // Calculate score
             const closenessScore = (schedulingHorizon - i) / schedulingHorizon * 10;
-            const capacityScore = (CONFIG.hoursPerDay * CONFIG.bufferPercent - dayLoad) / CONFIG.hoursPerDay * 10;
+            const capacityScore = (dailyHours * CONFIG.bufferPercent - dayLoad) / dailyHours * 10;
             const criticalityWeight = CONFIG.criticalityWeights[task.criticality] || 1;
             
             const score = closenessScore + capacityScore * criticalityWeight;
@@ -513,8 +672,8 @@ module.exports = async function(params) {
           ...task,
           scheduledDate: bestDate
         });
-      } catch (error) {
-        console.error(`Error scheduling task ${task.text}:`, error);
+      } catch (e) {
+        console.log(`Issue arising when scheduling task ${task.text}: ${e.message}`);
       }
     }
     
@@ -522,13 +681,27 @@ module.exports = async function(params) {
     const allScheduledTasks = [...sequentialTasksToSchedule, ...scheduledTasks];
     
     console.log(`Total scheduled tasks: ${allScheduledTasks.length} (${sequentialTasksToSchedule.length} sequential, ${scheduledTasks.length} non-sequential)`);
-	// Update task dates in files
+    
+    // Update task dates in files
     let updatedTasks = 0;
     const maxUpdatesPerRun = 50; // Limit file updates for performance
+    const alreadyProcessedTasks = new Set(); // Track tasks to avoid duplicate processing
     
     for (const task of allScheduledTasks) {
       try {
         if (!task.scheduledDate) continue;
+        
+        // Generate a unique ID for this task to avoid duplicates
+        const taskId = `${task.path}:${task.originalText.substring(0, 30)}`;
+        
+        // Skip if already processed
+        if (alreadyProcessedTasks.has(taskId)) {
+          console.log(`Skipping already processed task: ${task.text.substring(0, 30)}...`);
+          continue;
+        }
+        
+        // Add to processed set
+        alreadyProcessedTasks.add(taskId);
         
         // Safety check to limit the number of updates per run
         if (updatedTasks >= maxUpdatesPerRun) {
@@ -585,18 +758,31 @@ module.exports = async function(params) {
           if (updatedContent !== content) {
             await app.vault.modify(file, updatedContent);
             updatedTasks++;
+          } else {
+            console.log(`Content unchanged for: ${task.text.substring(0, 30)}...`);
           }
         } else {
-          console.log(`Could not find original task text in file: ${task.originalText}`);
+          console.log(`Could not find original task text in file: ${task.originalText.substring(0, 50)}...`);
+          failedUpdates.push({
+            task: task.text,
+            path: task.path,
+            originalText: task.originalText
+          });
         }
-      } catch (error) {
-        console.error(`Error updating task ${task.text}: ${error.message}`);
+      } catch (e) {
+        console.log(`Error updating task ${task.text}: ${e.message}`);
+        failedUpdates.push({
+          task: task.text,
+          path: task.path,
+          error: e.message
+        });
       }
     }
-    
+	
+	//Part Five: Report generation    
     // Create report
     const reportDate = moment().format('YYYY-MM-DD');
-    const reportNotePath = `00-Dashboard/scheduled-tasks-${reportDate}.md`;
+    let reportNotePath = `00-Dashboard/scheduled-tasks-${reportDate}.md`;
     
     let reportContent = `# Task Scheduling Report - ${reportDate}\n\n`;
     reportContent += `## Summary\n`;
@@ -609,6 +795,10 @@ module.exports = async function(params) {
     
     if (updatedTasks < allScheduledTasks.length) {
       reportContent += `**Note:** Only updated ${updatedTasks} out of ${allScheduledTasks.length} scheduled tasks to prevent performance issues. Run the scheduler again to update the remaining tasks.\n\n`;
+    }
+    
+    if (failedUpdates.length > 0) {
+      reportContent += `**Warning:** Failed to update ${failedUpdates.length} tasks. The task text may have changed or the files might have been modified.\n\n`;
     }
     
     // Group tasks by date for the report
@@ -664,32 +854,33 @@ module.exports = async function(params) {
     
     // Add task schedule by date
     reportContent += `## Scheduled Tasks\n`;
-	// Only include dates in the report up to maxProjectionDays
-	const maxReportDate = moment(today).add(CONFIG.maxProjectionDays, 'days').format('YYYY-MM-DD');
-	const sortedDates = Object.keys(tasksByDate)
-	  .filter(date => date <= maxReportDate)
-	  .sort();
+    
+    // Only include dates in the report up to maxProjectionDays
+    const maxReportDate = moment(today).add(CONFIG.maxProjectionDays, 'days').format('YYYY-MM-DD');
+    const sortedDates = Object.keys(tasksByDate)
+      .filter(date => date <= maxReportDate)
+      .sort();
 
-	// Limit to first 20 days for performance  
-	const displayDates = sortedDates.slice(0, 20);
-	const hiddenDaysCount = Math.max(0, sortedDates.length - 20);
-	  
-	for (const date of displayDates) {
-	  reportContent += `\n### ${date} - ${moment(date).format('dddd')}\n`;
-	  
-	  // Add a safety check
-	  if (!workloadMap[date]) {
-		reportContent += `No workload data available for this date.\n\n`;
-		continue;
-	  }
-	  
-	  reportContent += `Total workload: ${workloadMap[date].totalHours.toFixed(1)} hours\n\n`;
-	  
-	  // Check if tasksByDate has entries for this date
-	  if (!tasksByDate[date] || tasksByDate[date].length === 0) {
-		reportContent += `No scheduled tasks for this date.\n\n`;
-		continue;
-	  }
+    // Limit to first 20 days for performance  
+    const displayDates = sortedDates.slice(0, 20);
+    const hiddenDaysCount = Math.max(0, sortedDates.length - 20);
+      
+    for (const date of displayDates) {
+      reportContent += `\n### ${date} - ${moment(date).format('dddd')}\n`;
+      
+      // Add a safety check
+      if (!workloadMap[date]) {
+        reportContent += `No workload data available for this date.\n\n`;
+        continue;
+      }
+      
+      reportContent += `Total workload: ${workloadMap[date].totalHours.toFixed(1)} hours\n\n`;
+      
+      // Check if tasksByDate has entries for this date
+      if (!tasksByDate[date] || tasksByDate[date].length === 0) {
+        reportContent += `No scheduled tasks for this date.\n\n`;
+        continue;
+      }
  
       // Group by sequential and non-sequential
       const sequentialTasks = tasksByDate[date].filter(t => t.originalText && t.originalText.match(CONFIG.sequencePrefixRegex));
@@ -744,7 +935,9 @@ module.exports = async function(params) {
       try {
         const date = safeAddDays(today, i);
         const dayLoad = workloadMap[date] ? workloadMap[date].totalHours : 0;
-        const dayPercent = (dayLoad / CONFIG.hoursPerDay) * 100;
+        const dailyHours = getAvailableHours(date);
+        // Handle case where daily hours might be zero
+        const dayPercent = dailyHours > 0 ? (dayLoad / dailyHours) * 100 : 0;
         
         const monthName = moment(date).format('MMMM');
         if (monthName !== currentMonth) {
@@ -760,7 +953,7 @@ module.exports = async function(params) {
         }
         
         const dayFormat = moment(date).format('DD ddd');
-        reportContent += `${dayFormat}: ${loadBar} ${dayLoad.toFixed(1)}h / ${CONFIG.hoursPerDay}h (${dayPercent.toFixed(0)}%)\n`;
+        reportContent += `${dayFormat}: ${loadBar} ${dayLoad.toFixed(1)}h / ${dailyHours}h (${dayPercent.toFixed(0)}%)\n`;
       } catch (e) {
         console.log(`Error rendering calendar day: ${e.message}`);
       }
@@ -769,7 +962,15 @@ module.exports = async function(params) {
     
     // Add configuration
     reportContent += `\n## Configuration Used\n`;
-    reportContent += `- Hours per day: ${CONFIG.hoursPerDay}\n`;
+    reportContent += `- Default hours per day: ${CONFIG.hoursPerDay}\n`;
+    reportContent += `- Day-specific hours:\n`;
+    reportContent += `  - Sunday: ${CONFIG.dailyHours[0]}h\n`;
+    reportContent += `  - Monday: ${CONFIG.dailyHours[1]}h\n`;
+    reportContent += `  - Tuesday: ${CONFIG.dailyHours[2]}h\n`;
+    reportContent += `  - Wednesday: ${CONFIG.dailyHours[3]}h\n`;
+    reportContent += `  - Thursday: ${CONFIG.dailyHours[4]}h\n`;
+    reportContent += `  - Friday: ${CONFIG.dailyHours[5]}h\n`;
+    reportContent += `  - Saturday: ${CONFIG.dailyHours[6]}h\n`;
     reportContent += `- Default task time: ${CONFIG.defaultTaskTime}h\n`;
     reportContent += `- Buffer: ${CONFIG.bufferPercent * 100}%\n`;
     reportContent += `- Maximum planning days: ${CONFIG.maxPlanningDays}\n`;
@@ -777,12 +978,34 @@ module.exports = async function(params) {
     reportContent += `- Sequential task tag: ${CONFIG.sequenceTag}\n`;
     reportContent += `- Sequential task format: [number] Task description\n`;
     
+    // Add failed updates section if applicable
+    if (failedUpdates.length > 0) {
+      reportContent += `\n## Failed Updates\n`;
+      reportContent += `The following tasks could not be updated (limited to first 10):\n\n`;
+      
+      const displayFailures = failedUpdates.slice(0, 10);
+      for (const failure of displayFailures) {
+        reportContent += `- ${failure.task.substring(0, 80)}${failure.task.length > 80 ? '...' : ''} (in ${failure.path})\n`;
+      }
+      
+      if (failedUpdates.length > 10) {
+        reportContent += `- ... and ${failedUpdates.length - 10} more failed updates\n`;
+      }
+    }
+    
     // Create report note
     try {
       // Create Dashboard folder if it doesn't exist
       const dashboardFolder = app.vault.getAbstractFileByPath("00-Dashboard");
       if (!dashboardFolder) {
         await app.vault.createFolder("00-Dashboard");
+      }
+      
+      // Check if report already exists and use a timestamp if needed
+      const existingReport = app.vault.getAbstractFileByPath(reportNotePath);
+      if (existingReport) {
+        reportNotePath = `00-Dashboard/scheduled-tasks-${reportDate}-${Date.now()}.md`;
+        console.log(`Report already exists, using new name: ${reportNotePath}`);
       }
       
       await app.vault.create(reportNotePath, reportContent);
@@ -798,7 +1021,8 @@ module.exports = async function(params) {
     
     console.log(`Task scheduling complete. Updated ${updatedTasks} tasks.`);
     
-  } catch (error) {
-    console.error("Error in task scheduler:", error);
+  } catch (e) {
+    console.error(`Error with the whole script: ${e.message}`);
+    console.error(e.stack); // Add stack trace for better debugging
   }
 }
