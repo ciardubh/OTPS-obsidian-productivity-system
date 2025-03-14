@@ -7,73 +7,12 @@ type: review
 # Weekly Review - {{date:YYYY-[W]ww}}
 
 ## Week Overview
-**Week Span**: {{date:YYYY-MM-DD}} to {{date+6:YYYY-MM-DD}}
+**Week Span**:  <% tp.date.now("YYYY-MM-DD") %> to <% tp.date.now("YYYY-MM-DD", 6) %>
 
-## Wellness Scores
-
-### This Week's Daily Scores
-```dataview
-TABLE 
-  choice(contains(file.day.morning-score, ""), "—", file.day.morning-score) as "Morning",
-  choice(contains(file.day.afternoon-score, ""), "—", file.day.afternoon-score) as "Afternoon",
-  choice(contains(file.day.evening-score, ""), "—", file.day.evening-score) as "Evening"
-FROM "06-Daily"
-WHERE file.name >= "{{date:YYYY-MM-DD}}" AND file.name <= "{{date+6:YYYY-MM-DD}}" AND !file.name.includes("sick-day") AND !file.name.includes("reset")
-SORT file.name ASC
-```
-
-### Weekly Average Score
-```dataview
-TABLE 
-  round(avg(file.day.morning-score), 1) as "Morning Avg",
-  round(avg(file.day.afternoon-score), 1) as "Afternoon Avg",
-  round(avg(file.day.evening-score), 1) as "Evening Avg",
-  round(avg(list(file.day.morning-score, file.day.afternoon-score, file.day.evening-score)), 1) as "Overall Avg"
-FROM "06-Daily"
-WHERE file.name >= "{{date:YYYY-MM-DD}}" AND file.name <= "{{date+6:YYYY-MM-DD}}" AND !file.name.includes("sick-day") AND !file.name.includes("reset")
-```
-
-## Task Completion
-
-### Tasks Completed This Week
-```tasks
-done
-done after {{date:YYYY-MM-DD}}
-done before {{date+7:YYYY-MM-DD}}
-```
-
-### Tasks Added This Week
-```tasks
-created after {{date:YYYY-MM-DD}}
-created before {{date+7:YYYY-MM-DD}}
-```
-
-### Task Metrics
-```dataview
-TABLE 
-  length(filter(file.tasks.completed, (t) => t.completion >= date("{{date:YYYY-MM-DD}}") AND t.completion <= date("{{date+6:YYYY-MM-DD}}"))) as "Tasks Completed",
-  length(filter(file.tasks.text, (t) => contains(t.created, "{{date:YYYY-MM-DD}}") or contains(t.created, "{{date+1:YYYY-MM-DD}}") or contains(t.created, "{{date+2:YYYY-MM-DD}}") or contains(t.created, "{{date+3:YYYY-MM-DD}}") or contains(t.created, "{{date+4:YYYY-MM-DD}}") or contains(t.created, "{{date+5:YYYY-MM-DD}}") or contains(t.created, "{{date+6:YYYY-MM-DD}}"))) as "Tasks Added"
-FROM "06-Daily" or "01-Projects" or "02-Areas"
-WHERE file.name >= "{{date:YYYY-MM-DD}}" AND file.name <= "{{date+6:YYYY-MM-DD}}" OR file.path = "00-Dashboard/home"
-FLATTEN file.tasks as tasks
-GROUP BY "Task Metrics"
-```
-
-## Project Progress
-
-### Project Status Updates
-```dataview
-TABLE 
-  client as "Client",
-  deadline as "Deadline",
-  stage as "Current Stage"
-FROM "01-Projects"
-WHERE status = "Active"
-SORT deadline ASC
-```
-
-### Projects Needing Attention
-<!-- Review and manually list any projects at risk or needing urgent attention -->
+### Top Priorities From Last Week's Review
+1. 
+2. 
+3. 
 
 ## Weekly Review Questions
 
@@ -113,22 +52,79 @@ SORT deadline ASC
 
 ## Next Week Planning
 
-### Top Priorities Next Week
-1. 
-2. 
-3. 
+### Projects Needing Attention
+<!-- Review and manually list any projects at risk or needing urgent attention -->
 
-### Upcoming Deadlines
-```tasks
-not done
-due after {{date:YYYY-MM-DD}}
-due before {{date+13:YYYY-MM-DD}}
-```
 
 ### Project Focus
 <!-- Which specific projects need most attention next week? -->
 1. 
 2. 
 
+### Top Priorities Next Week
+1. 
+2. 
+3. 
+
 ## Notes and Reflections
 <!-- Any additional insights or ideas from this week? -->
+
+_________________________________________________________________________
+## Wellness Scores
+
+### This Week's Daily Scores
+
+```dataview
+TABLE 
+  file.name as "Date",
+  choice(file.frontmatter.morning_score >= 4, "🟢 " + file.frontmatter.morning_score, 
+         choice(file.frontmatter.morning_score >= 3, "🟡 " + file.frontmatter.morning_score, 
+                choice(file.frontmatter.morning_score != null, "🔴 " + file.frontmatter.morning_score, "—"))) as "Morning",
+  choice(file.frontmatter.afternoon_score >= 4, "🟢 " + file.frontmatter.afternoon_score, 
+         choice(file.frontmatter.afternoon_score >= 3, "🟡 " + file.frontmatter.afternoon_score, 
+                choice(file.frontmatter.afternoon_score != null, "🔴 " + file.frontmatter.afternoon_score, "—"))) as "Afternoon",
+  choice(file.frontmatter.evening_score >= 4, "🟢 " + file.frontmatter.evening_score, 
+         choice(file.frontmatter.evening_score >= 3, "🟡 " + file.frontmatter.evening_score, 
+                choice(file.frontmatter.evening_score != null, "🔴 " + file.frontmatter.evening_score, "—"))) as "Evening",
+  choice(all(file.frontmatter.morning_score, file.frontmatter.afternoon_score, file.frontmatter.evening_score),
+         choice(((number(file.frontmatter.morning_score) + number(file.frontmatter.afternoon_score) + number(file.frontmatter.evening_score)) / 3) >= 4, 
+                "🟢 " + round((number(file.frontmatter.morning_score) + number(file.frontmatter.afternoon_score) + number(file.frontmatter.evening_score)) / 3, 1), 
+                choice(((number(file.frontmatter.morning_score) + number(file.frontmatter.afternoon_score) + number(file.frontmatter.evening_score)) / 3) >= 3, 
+                       "🟡 " + round((number(file.frontmatter.morning_score) + number(file.frontmatter.afternoon_score) + number(file.frontmatter.evening_score)) / 3, 1), 
+                       "🔴 " + round((number(file.frontmatter.morning_score) + number(file.frontmatter.afternoon_score) + number(file.frontmatter.evening_score)) / 3, 1))),
+         "—") as "Daily Avg"
+FROM "06-Daily"
+WHERE file.name >= "<% tp.date.now("YYYY-MM-DD", -6) %>" AND file.name <= "<%tp.date.now("YYYY-MM-DD") %>" 
+  AND (file.frontmatter.morning_score > 0 OR file.frontmatter.afternoon_score > 0 OR file.frontmatter.evening_score > 0)
+SORT file.name ASC
+```
+
+
+## Project Progress
+
+### Project Status Updates
+```dataview
+TABLE 
+  client as "Client",
+  deadline as "Deadline",
+  stage as "Current Stage"
+FROM "01-Projects"
+WHERE status = "Active"
+SORT deadline ASC
+```
+
+## Task completion
+
+### Tasks completed this week
+```tasks
+done
+done after <% tp.date.now("YYYY-MM-DD", -7) %>
+done before <% tp.date.now("YYYY-MM-DD") %>
+```
+
+### Upcoming Deadlines
+```tasks
+not done
+due after <% tp.date.now("YYYY-MM-DD") %>
+due before <% tp.date.now("YYYY-MM-DD", 7) %>
+```
