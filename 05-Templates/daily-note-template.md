@@ -1,13 +1,21 @@
-# {{date:YYYY-MM-DD}} ({{date:dddd}})
+---
+date: {{date:YYYY-MM-DD}}
+type: daily
+morning_score:
+afternoon_score:
+evening_score:
+---
 
-## Daily Scores
-Morning: _ #morning-score
-Afternoon: _ #afternoon-score  
-Evening: _ #evening-score
+# {{date:YYYY-MM-DD}} ({{date:dddd}})
 
 ## Today's Focus
 
 
+## Overdue Tasks
+```tasks
+not done
+due before today
+```
 ## Tasks Due Today
 ```tasks
 not done
@@ -18,3 +26,4 @@ due today
 - [ ] Log morning score #critical  📅 {{date:YYYY-MM-DD}} #autodate 
 - [ ] Log afternoon score #critical  📅 {{date:YYYY-MM-DD}} #autodate 
 - [ ] Log evening score #critical  📅 {{date:YYYY-MM-DD}} #autodate
+
